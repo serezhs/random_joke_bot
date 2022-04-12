@@ -1,6 +1,6 @@
 Random JokeBot
 
-=====
+##
 
 Random JokeBot - Это бот для обмена анекдотами в телеграм.
 Бот работает с помощью одноименного API проекта (https://github.com/serezhs/random_joke).
