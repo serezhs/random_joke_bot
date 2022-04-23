@@ -18,7 +18,7 @@ server_url = os.getenv('URL')
 bot = telebot.TeleBot(bot_token)  # API-токен бота в телеграм
 URL = server_url  # домен на котором располагается апи проекта
 
-last_message = None
+last_message = {}
 mass_adding_users = []
 
 
@@ -174,7 +174,7 @@ def get_random_joke(message):
 
         # временное сохранение сообщения
         global last_message
-        last_message = message.text
+        last_message[message.chat.id] = message.text
 
         # запрос подтверждения
         bot.send_message(
@@ -344,7 +344,8 @@ def get_reply(call):
         try:
             # сбор данных для post запроса
             global last_message
-            text = last_message
+            text = last_message[call.message.chat.id]
+            del last_message[call.message.chat.id]
             name = ''
             surname = ''
             if call.message.chat.first_name:
