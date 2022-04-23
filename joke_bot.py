@@ -1,14 +1,24 @@
+import logging
+import os
 import re
 
 import requests
 import telebot
+from dotenv import load_dotenv
 from telebot import types
 
-bot = telebot.TeleBot('*')
-URL = 'http://127.0.0.1:8000/'  # домен на котором располагается апи проекта
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.ERROR, filename='bot_logs.log', filemode='w')
+
+load_dotenv()
+bot_token = os.getenv('TOKEN')
+server_url = os.getenv('URL')
+
+bot = telebot.TeleBot(bot_token)  # API-токен бота в телеграм
+URL = server_url  # домен на котором располагается апи проекта
 
 last_message = None
-mass_adding = False
 mass_adding_users = []
 
 
@@ -51,8 +61,9 @@ def instruction(message):
     )
 
     # отправка сообщения с инструкцией
-    bot.send_message(message.chat.id, instruction,
-                     parse_mode='html', reply_markup=markup)
+    bot.send_message(
+        message.chat.id, instruction, parse_mode='html', reply_markup=markup
+        )
 
 
 # обработка входящих сообщений и вызов нужных функий
@@ -72,62 +83,85 @@ def message_processing(message):
 
 # получение случайной шутки
 def send_random_joke(message):
-    # вывод кнопок like&dislike
-    markup = types.InlineKeyboardMarkup()
-    like = types.InlineKeyboardButton('👍', callback_data='like')
-    dislike = types.InlineKeyboardButton('👎', callback_data='dislike')
-    markup.add(like, dislike)
+    try:
+        # вывод кнопок like&dislike
+        markup = types.InlineKeyboardMarkup()
+        like = types.InlineKeyboardButton('👍', callback_data='like')
+        dislike = types.InlineKeyboardButton('👎', callback_data='dislike')
+        markup.add(like, dislike)
 
-    # запрос шутки с сервера
-    response = requests.get(URL + 'jokes/')
-    response = response.json()
-    joke = response['text']
-    joke_id = response['id']
-    joke_rating = response['rating']
-    joke_author = response['author']
+        # запрос шутки с сервера
+        response = requests.get(URL + 'jokes/')
+        response = response.json()
+        joke = response['text']
+        joke_id = response['id']
+        joke_rating = response['rating']
+        joke_author = response['author']
 
-    # составление текста шутки
-    text = (
-        f'анекдот № {joke_id}\n\n{joke}\n\n'
-        f'рейтинг: {joke_rating}\n{joke_author}'
-        )
+        # составление текста шутки
+        text = (
+            f'анекдот № {joke_id}\n\n{joke}\n\n'
+            f'рейтинг: {joke_rating}\n{joke_author}'
+            )
 
-    # отправка шутки
-    bot.send_message(message.chat.id, text, parse_mode='html',
-                     reply_markup=markup)
+        # отправка шутки
+        bot.send_message(
+            message.chat.id, text, parse_mode='html',
+            reply_markup=markup
+            )
+
+    # если произошла ошибка
+    except Exception as error:
+        # добавления записи об ошибки в файл логов
+        logging.error(
+            f'Ошибка при отправке случайной шутки пользователю: {error}'
+            )
 
 
-# добавление одной шутки
+# добавление шутки
 def get_random_joke(message):
-    global mass_adding
     global mass_adding_users
 
     # проверка, включен ли режим массового добавления
-    if mass_adding and message.chat.id in mass_adding_users:
-        # сбор данных для post запроса
-        text = message.text
-        name = ''
-        surname = ''
-        if message.chat.first_name:
-            name = message.chat.first_name
-        if message.chat.last_name:
-            surname = message.chat.last_name
-        author = name + ' ' + surname
-        data = {
-            "text": text,
-            "author": author
-            }
+    if message.chat.id in mass_adding_users:
+        try:
+            # сбор данных для post запроса
+            text = message.text
+            name = ''
+            surname = ''
+            if message.chat.first_name:
+                name = message.chat.first_name
+            if message.chat.last_name:
+                surname = message.chat.last_name
+            author = name + ' ' + surname
+            data = {
+                "text": text,
+                "author": author
+                }
 
-        # отправка оценки на сервер
-        request = requests.post(URL + 'jokes/', data=data)
-        request = request.json()
+            # отправка оценки на сервер
+            request = requests.post(URL + 'jokes/', data=data)
+            request = request.json()
 
-        # составление сообщения пользователю
-        joke_number = request['id']
-        text = f'анекдот №{joke_number} добавлен😎👍'
+            # составление сообщения пользователю
+            joke_number = request['id']
+            text = f'анекдот №{joke_number} добавлен😎👍'
 
-        # отправка сообщения, что шутка создана
-        bot.send_message(message.chat.id, text)
+            # отправка сообщения, что шутка создана
+            bot.send_message(message.chat.id, text)
+
+        # если произошла ошибка
+        except Exception as error:
+            # добавления записи об ошибки в файл логов
+            logging.error(
+                'Ошибка при получении случайной шутки '
+                f'от пользователя в режиме массового добавления: {error}'
+                )
+            # отправка сообщения, что шутка не добавлена
+            bot.send_message(
+                    message.chat.id,
+                    'Не удалось добавить анекдот: сервер не отвечает🥲'
+                    )
 
     # если режим массового добавления не включен -
     # дополнительно запрашивать подтверждение
@@ -158,10 +192,9 @@ def adding_jokes(message):
     markup.add(exit)
 
     # включение режима массового добавления
-    global mass_adding
     global mass_adding_users
-    mass_adding = True
-    mass_adding_users.append(message.chat.id)
+    if message.chat.id not in mass_adding_users:
+        mass_adding_users.append(message.chat.id)
 
     # подготовка текста сообщения
     text = 'теперь можно добавлять анекдоты без дополнительного подтверждения'
@@ -173,10 +206,9 @@ def adding_jokes(message):
 # отключение режима массового добавления
 def mass_adding_exit(message):
     # отключение режима
-    global mass_adding
     global mass_adding_users
-    mass_adding = False
-    mass_adding_users.remove(message.chat.id)
+    if message.chat.id in mass_adding_users:
+        mass_adding_users.remove(message.chat.id)
 
     # возврат кнопок
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -186,106 +218,186 @@ def mass_adding_exit(message):
     markup.add(sent_joke)
     markup.add(adding_jokes, help)
 
-    bot.send_message(message.chat.id, 'режим массового добавления отключен',
-                     reply_markup=markup)
+    bot.send_message(
+        message.chat.id, 'режим массового добавления отключен',
+        reply_markup=markup
+        )
 
 
 # обработка кнопок, прикрепленных к сообщению
 @bot.callback_query_handler(func=lambda call: True)
-def get_like(call):
+def get_reply(call):
     # обработка кнопки лайк анекдоту
     if call.data == 'like':
-        # сбор данных для post запроса
-        user_id = call.message.chat.id
-        text = call.message.text
-        id = re.search(r'\d+', text)
-        joke_id = int(id[0])
-        data = {
-            "mark": 1,
-            "user": user_id,
-            "joke": joke_id
-            }
+        try:
+            # сбор данных для post запроса
+            user_id = call.message.chat.id
+            text = call.message.text
+            id = re.search(r'\d+', text)
+            joke_id = int(id[0])
+            data = {
+                "mark": 1,
+                "user": user_id,
+                "joke": joke_id
+                }
 
-        # отправка оценки на сервер
-        requests.post(URL + 'vote/', data=data)
+            # отправка оценки на сервер
+            requests.post(URL + 'vote/', data=data)
 
-        # создание кнопки ✅
-        markup = types.InlineKeyboardMarkup()
-        ok = types.InlineKeyboardButton('✅', callback_data='ok')
-        markup.add(ok)
+            # создание кнопки ✅
+            markup = types.InlineKeyboardMarkup()
+            ok = types.InlineKeyboardButton('✅', callback_data='ok')
+            markup.add(ok)
 
-        # вывод кнопки ✅ вместо кнопок оценки
-        bot.edit_message_reply_markup(
-            chat_id=call.message.chat.id, message_id=call.message.id,
-            reply_markup=markup
-            )
+            # вывод кнопки ✅ вместо кнопок оценки
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.id,
+                reply_markup=markup
+                )
 
-        # сообщение пользователю
-        bot.answer_callback_query(call.id, 'ваш голос очень важен для нас')
+            # сообщение пользователю
+            bot.answer_callback_query(call.id, 'ваш голос очень важен для нас')
+
+        # если произошла ошибка
+        except Exception as error:
+            # добавления записи об ошибки в файл логов
+            logging.error(
+                'Ошибка при получении оценки '
+                f'от пользователя: {error}'
+                )
+
+            # создание кнопки 😵‍💫
+            markup = types.InlineKeyboardMarkup()
+            ok = types.InlineKeyboardButton('😵‍💫', callback_data='error')
+            markup.add(ok)
+
+            # замена кнопок с оценками кнопкой 😵‍💫
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.id,
+                reply_markup=markup
+                )
+
+            # отправка сообщения, что оценка не учтена
+            bot.send_message(
+                    call.message.chat.id,
+                    'Не удалось добавить оценку: сервер не отвечает🥲'
+                    )
 
     # обработка кнопки дизлайк к анекдоту
     if call.data == 'dislike':
-        # сбор данных для post запроса
-        user_id = call.message.chat.id
-        text = call.message.text
-        id = re.search(r'\d+', text)
-        joke_id = int(id[0])
-        data = {
-            "mark": -1,
-            "user": user_id,
-            "joke": joke_id
-            }
+        try:
+            # сбор данных для post запроса
+            user_id = call.message.chat.id
+            text = call.message.text
+            id = re.search(r'\d+', text)
+            joke_id = int(id[0])
+            data = {
+                "mark": -1,
+                "user": user_id,
+                "joke": joke_id
+                }
 
-        # отправка оценки на сервер
-        requests.post(URL + 'vote/', data=data)
+            # отправка оценки на сервер
+            requests.post(URL + 'vote/', data=data)
 
-        # создание кнопки ✅
-        markup = types.InlineKeyboardMarkup()
-        ok = types.InlineKeyboardButton('✅', callback_data='ok')
-        markup.add(ok)
+            # создание кнопки ✅
+            markup = types.InlineKeyboardMarkup()
+            ok = types.InlineKeyboardButton('✅', callback_data='ok')
+            markup.add(ok)
 
-        # вывод кнопки ✅ вместо кнопок оценки
-        bot.edit_message_reply_markup(
-            chat_id=call.message.chat.id, message_id=call.message.id,
-            reply_markup=markup
-            )
+            # вывод кнопки ✅ вместо кнопок оценки
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.id,
+                reply_markup=markup
+                )
 
-        # сообщение пользователю
-        bot.answer_callback_query(call.id, 'ваш голос очень важен для нас')
+            # сообщение пользователю
+            bot.answer_callback_query(call.id, 'ваш голос очень важен для нас')
+
+        # если произошла ошибка
+        except Exception as error:
+            # добавления записи об ошибки в файл логов
+            logging.error(
+                'Ошибка при получении оценки '
+                f'от пользователя: {error}'
+                )
+
+            # создание кнопки 😵‍💫
+            markup = types.InlineKeyboardMarkup()
+            ok = types.InlineKeyboardButton('😵‍💫', callback_data='error')
+            markup.add(ok)
+
+            # замена кнопок с оценками кнопкой 😵‍💫
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.id,
+                reply_markup=markup
+                )
+
+            # отправка сообщения, что оценка не учтена
+            bot.send_message(
+                    call.message.chat.id,
+                    'Не удалось добавить оценку: сервер не отвечает🥲'
+                    )
 
     # обработка кнопки да при принятии анекдота от пользователя
     if call.data == 'yes':
-        # сбор данных для post запроса
-        global last_message
-        text = last_message
-        name = ''
-        surname = ''
-        if call.message.chat.first_name:
-            name = call.message.chat.first_name
-        if call.message.chat.last_name:
-            surname = call.message.chat.last_name
-        author = name + ' ' + surname
-        data = {
-            "text": text,
-            "author": author
-            }
+        try:
+            # сбор данных для post запроса
+            global last_message
+            text = last_message
+            name = ''
+            surname = ''
+            if call.message.chat.first_name:
+                name = call.message.chat.first_name
+            if call.message.chat.last_name:
+                surname = call.message.chat.last_name
+            author = name + ' ' + surname
+            data = {
+                "text": text,
+                "author": author
+                }
 
-        # отправка оценки на сервер
-        request = requests.post(URL + 'jokes/', data=data)
-        request = request.json()
+            # отправка оценки на сервер
+            request = requests.post(URL + 'jokes/', data=data)
+            request = request.json()
 
-        # удаление кнопок
-        bot.edit_message_reply_markup(
-            chat_id=call.message.chat.id, message_id=call.message.id,
-            reply_markup=None
-            )
+            # удаление кнопок
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.id,
+                reply_markup=None
+                )
 
-        # составление сообщения пользователю
-        joke_number = request['id']
-        text = f'анекдот №{joke_number} добавлен😎👍'
+            # составление сообщения пользователю
+            joke_number = request['id']
+            text = f'анекдот №{joke_number} добавлен😎👍'
 
-        # отправка сообщения, что шутка создана
-        bot.send_message(call.message.chat.id, text)
+            # отправка сообщения, что шутка создана
+            bot.send_message(call.message.chat.id, text)
+
+        # если произошла ошибка
+        except Exception as error:
+            # добавления записи об ошибки в файл логов
+            logging.error(
+                'Ошибка при получении случайной шутки '
+                f'от пользователя: {error}'
+                )
+
+            # создание кнопки 😵‍💫
+            markup = types.InlineKeyboardMarkup()
+            ok = types.InlineKeyboardButton('😵‍💫', callback_data='error')
+            markup.add(ok)
+
+            # замена кнопок с оценками кнопкой 😵‍💫
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.id,
+                reply_markup=markup
+                )
+
+            # отправка сообщения, что шутка не добавлена
+            bot.send_message(
+                    call.message.chat.id,
+                    'Не удалось добавить анекдот: сервер не отвечает🥲'
+                    )
 
     # обработка кнопки да при принятии анекдота от пользователя
     if call.data == 'no':
@@ -302,6 +414,15 @@ def get_like(call):
     if call.data == 'ok':
         bot.answer_callback_query(call.id, 'оценка учтена')
 
+    # обработка кнопки 😵‍💫, которая выводится в случае ошибки
+    if call.data == 'error':
+        bot.answer_callback_query(call.id, 'что-то пошло не так')
 
-# строка чтоб бот принимал сообщения
-bot.polling(non_stop=True)
+
+def main():
+    # строка чтоб бот принимал сообщения
+    bot.polling(non_stop=True)
+
+
+if __name__ == '__main__':
+    main()
